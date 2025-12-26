@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Статусы</title>
+  <style>
+    body { font-family: system-ui, Arial, sans-serif; margin: 16px; }
+    .top { display:flex; gap:12px; align-items:center; flex-wrap:wrap; margin-bottom: 12px; }
+    input { padding: 8px 10px; border-radius: 10px; border:1px solid #ccc; min-width: 260px; }
+    .meta { color:#666; font-size: 13px; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 8px; }
+    .card { padding: 10px 12px; border-radius: 10px; border: 1px solid #ddd; background: #f3f3f3; color:#444; }
+    .green { background: #e8f7ea; border-color: #bfe6c7; }
+  </style>
+</head>
+<body>
+  <div class="top">
+    <input id="q" placeholder="Поиск по ФИО…" />
+    <div class="meta" id="meta">Загрузка…</div>
+  </div>
+
+  <div class="grid" id="grid"></div>
+
+<script>
+  const NAMES = [
+    "Иванов Иван Иванович",
+    "Петров Пётр Петрович",
+    "Сидорова Анна Сергеевна"
+  ];
+
+  const grid = document.getElementById('grid');
+  const meta = document.getElementById('meta');
+  const q = document.getElementById('q');
+  const nodesByName = new Map();
+
+  function norm(s){ return (s||'').trim().replace(/\s+/g,' '); }
+
+  function render(names) {
+    grid.innerHTML = '';
+    nodesByName.clear();
+    for (const name of names) {
+      const div = document.createElement('div');
+      div.className = 'card';
+      div.textContent = name;
+      div.dataset.name = name.toLowerCase();
+      grid.appendChild(div);
+      nodesByName.set(norm(name), div);
+    }
+  }
+  render(NAMES);
+
+  async function refresh() {
+    try {
+      const res = await fetch('status.json?ts=' + Date.now(), { cache: 'no-store' });
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      const data = await res.json(); // {fio:0/1}
+
+      for (const node of nodesByName.values()) node.className = 'card';
+
+      let greenCount = 0;
+      for (const [fio, v] of Object.entries(data)) {
+        if (Number(v) === 1) {
+          const node = nodesByName.get(norm(fio));
+          if (node) { node.className = 'card green'; greenCount++; }
+        }
+      }
+      meta.textContent = `Обновлено: ${new Date().toLocaleTimeString()} | Зеленых: ${greenCount}/${NAMES.length}`;
+    } catch (e) {
+      meta.textContent = `Ошибка обновления: ${e.message}`;
+    }
+  }
+
+  q.addEventListener('input', () => {
+    const term = q.value.trim().toLowerCase();
+    for (const el of grid.children) {
+      el.style.display = term === '' || el.dataset.name.includes(term) ? '' : 'none';
+    }
+  });
+
+  refresh();
+  setInterval(refresh, 20 * 60 * 1000);
+</script>
+</body>
+</html>
