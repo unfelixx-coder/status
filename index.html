@@ -23,52 +23,56 @@
   <div class="grid" id="grid"></div>
 
 <script>
-  const NAMES = [
-    "Иванов Иван Иванович",
-    "Петров Пётр Петрович",
-    "Сидорова Анна Сергеевна"
-  ];
-
   const grid = document.getElementById('grid');
   const meta = document.getElementById('meta');
   const q = document.getElementById('q');
-  const nodesByName = new Map();
 
-  function norm(s){ return (s||'').trim().replace(/\s+/g,' '); }
-
-  function render(names) {
-    grid.innerHTML = '';
-    nodesByName.clear();
-    for (const name of names) {
-      const div = document.createElement('div');
-      div.className = 'card';
-      div.textContent = name;
-      div.dataset.name = name.toLowerCase();
-      grid.appendChild(div);
-      nodesByName.set(norm(name), div);
-    }
+  function norm(s){
+    return (s ?? '').toString().trim().replace(/\s+/g, ' ');
   }
-  render(NAMES);
 
-  async function refresh() {
-    try {
-      const res = await fetch('status.json?ts=' + Date.now(), { cache: 'no-store' });
-      if (!res.ok) throw new Error('HTTP ' + res.status);
-      const data = await res.json(); // {fio:0/1}
-
-      for (const node of nodesByName.values()) node.className = 'card';
-
-      let greenCount = 0;
-      for (const [fio, v] of Object.entries(data)) {
-        if (Number(v) === 1) {
-          const node = nodesByName.get(norm(fio));
-          if (node) { node.className = 'card green'; greenCount++; }
-        }
-      }
-      meta.textContent = `Обновлено: ${new Date().toLocaleTimeString()} | Зеленых: ${greenCount}/${NAMES.length}`;
-    } catch (e) {
-      meta.textContent = `Ошибка обновления: ${e.message}`;
+  function detectDelimiter(line) {
+    const delims = [',', ';', '\t'];
+    let best = ',', max = -1;
+    for (const d of delims) {
+      const c = (line.match(new RegExp('\\' + d, 'g')) || []).length;
+      if (c > max) { max = c; best = d; }
     }
+    return best;
+  }
+
+  function parseCSVLine(line, delim) {
+    const out = [];
+    let cur = '';
+    let inQuotes = false;
+    for (let i = 0; i < line.length; i++) {
+      const ch = line[i];
+      if (ch === '"') {
+        if (inQuotes && line[i + 1] === '"') { cur += '"'; i++; }
+        else inQuotes = !inQuotes;
+      } else if (!inQuotes && ch === delim) {
+        out.push(cur); cur = '';
+      } else {
+        cur += ch;
+      }
+    }
+    out.push(cur);
+    return out;
+  }
+
+  const nodesByName = new Map(); // fio -> div
+
+  function renderRow(fio, isGreen) {
+    let node = nodesByName.get(fio);
+    if (!node) {
+      node = document.createElement('div');
+      node.className = 'card';
+      node.textContent = fio;
+      node.dataset.name = fio.toLowerCase();
+      grid.appendChild(node);
+      nodesByName.set(fio, node);
+    }
+    node.className = isGreen ? 'card green' : 'card';
   }
 
   q.addEventListener('input', () => {
@@ -77,6 +81,45 @@
       el.style.display = term === '' || el.dataset.name.includes(term) ? '' : 'none';
     }
   });
+
+  async function refresh() {
+    try {
+      const res = await fetch('status.csv?ts=' + Date.now(), { cache: 'no-store' });
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+
+      const text = await res.text();
+      const lines = text.split(/\r?\n/).filter(l => l.trim() !== '');
+      if (lines.length < 2) throw new Error('CSV пустой');
+
+      const delim = detectDelimiter(lines[0]);
+      const header = parseCSVLine(lines[0], delim).map(h => norm(h).toLowerCase());
+      const fioIdx = header.indexOf('fio');
+      const ffIdx  = header.indexOf('ff');
+      if (fioIdx === -1 || ffIdx === -1)
+        throw new Error('В CSV должны быть колонки fio и ff');
+
+      // сброс
+      grid.innerHTML = '';
+      nodesByName.clear();
+
+      let greenCount = 0;
+
+      for (let i = 1; i < lines.length; i++) {
+        const cols = parseCSVLine(lines[i], delim);
+        const fio = norm(cols[fioIdx] ?? '');
+        const ff  = norm(cols[ffIdx] ?? '');
+        if (!fio) continue;
+        const isGreen = ff === '1';
+        renderRow(fio, isGreen);
+        if (isGreen) greenCount++;
+      }
+
+      meta.textContent =
+        `Обновлено: ${new Date().toLocaleTimeString()} | Зеленых: ${greenCount}/${nodesByName.size}`;
+    } catch (e) {
+      meta.textContent = `Ошибка обновления: ${e.message}`;
+    }
+  }
 
   refresh();
   setInterval(refresh, 1 * 60 * 1000);
